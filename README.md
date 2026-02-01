@@ -90,14 +90,6 @@ To enable password reset emails, configure an SMTP provider:
 | `SMTP_PASSWORD` | SMTP Password. | `secret` |
 | `SMTP_FROM` | Sender email address. | `noreply@kotatsu.app` |
 
-### Remote Database (Turso)
-
-To use a remote LibSQL/Turso database instead of a local file:
-
-```shell
-export DB_PATH="libsql://your-db-name.turso.io?authToken=ey..."
-```
-
 ## Testing
 
 This project includes a comprehensive test suite covering Auth, Sync, and User flows.
