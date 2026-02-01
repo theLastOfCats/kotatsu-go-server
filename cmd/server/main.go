@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"os"
 
+	_ "github.com/joho/godotenv/autoload"
 	"github.com/theLastOfCats/kotatsu-go-server/internal/api"
 	"github.com/theLastOfCats/kotatsu-go-server/internal/auth"
 	"github.com/theLastOfCats/kotatsu-go-server/internal/db"
-	_ "github.com/joho/godotenv/autoload"
+	"github.com/theLastOfCats/kotatsu-go-server/internal/mail"
+	"github.com/theLastOfCats/kotatsu-go-server/internal/templates"
 )
 
 func main() {
@@ -30,32 +32,38 @@ func main() {
 	}
 	defer database.Close()
 
+	// Initialize Services
+	mailer := mail.NewSenderFromEnv()
+	templatesMgr := templates.NewManager("templates")
+	baseURL := os.Getenv("BASE_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
+	}
+
 	// Initialize Handlers
-	authHandler := &api.AuthHandler{DB: database}
+	authHandler := &api.AuthHandler{
+		DB:        database,
+		Mailer:    mailer,
+		Templates: templatesMgr,
+		BaseURL:   baseURL,
+	}
 	syncHandler := &api.SyncHandler{DB: database}
+	userHandler := &api.UserHandler{DB: database}
 
 	// Router
 	mux := http.NewServeMux()
 
 	// Auth Routes
-	mux.HandleFunc("POST /auth", authHandler.Login)
-    // mux.HandleFunc("POST /auth/register", authHandler.Register) // Optional, if needed. Android app might not use it directly if it registers via "login" based on logic, but README says "An account is created...". README says "enter email... acts as registration screen".
-    // Wait, the README says "even if you have not registered... authorization screen also acts as a registration screen".
-    // So /auth likely handles both or there is strict "Allow New Register" logic.
-    // Kotlin code `AuthRoutes.kt`: `val user = getOrCreateUser(request, allowNewRegister)`
-    // So correct, the /auth endpoint handles Login AND Registration implicitly if enabled.
-    // I implemented separate Register/Login in `AuthHandler`. I need to fix `Login` to support `getOrCreateUser` logic or update my main binding to point to a unified handler.
-    // I'll stick to what I wrote for now but I really should combine them to match Kotlin behavior.
-    
-    // Let's quickly patch AuthHandler.Login to be "LoginOrRegister".
-    // Actually, I'll do that in a follow-up to match behavior exactl. For now, let's keep it wiring standard.
+	// Public Routes
+	mux.HandleFunc("GET /", api.Health)
 
-	mux.HandleFunc("POST /forgot-password", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Not implemented", http.StatusNotImplemented)
-	})
-	mux.HandleFunc("POST /reset-password", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Not implemented", http.StatusNotImplemented)
-	})
+	mux.HandleFunc("POST /auth", authHandler.Login)
+	mux.HandleFunc("POST /forgot-password", authHandler.ForgotPassword)
+	mux.HandleFunc("POST /reset-password", authHandler.ResetPassword)
+	mux.HandleFunc("GET /deeplink/reset-password", authHandler.ResetPasswordDeeplink)
+
+	// Protected Routes
+	mux.Handle("GET /me", api.AuthMiddleware(http.HandlerFunc(userHandler.GetMe)))
 
 	// Sync Routes (Protected)
 	mux.Handle("GET /resource/history", api.AuthMiddleware(http.HandlerFunc(syncHandler.GetHistory)))
