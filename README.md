@@ -1,17 +1,17 @@
 # Kotatsu Synchronization Server
 
-[Kotatsu](https://github.com/Kotatsu-Redo/Kotatsu) is a free and open source manga reader for Android platform. Supports a lot of online catalogues on different languages with filters and search, offline reading from local storage, favourites, bookmarks, new chapters notifications and more features.
+[Kotatsu](https://github.com/Kotatsu-Redo/Kotatsu) is a free and open source manga reader for Android platform. This is the Go implementation of the synchronization server, designed to be lightweight, performant, and feature-complete.
 
-### What is synchronization?
+## Features
 
-Synchronization is needed to store your collection of favorites, history and categories and have remote access to them. On a synchronized device, you can restore your manga collection in real time without loss. It also supports working across multiple devices. It is convenient for those who use several devices.
-
-### How does synchronization work?
-
-- An account is created and configured in the application where it will store data;
-- Synchronization starts. The data selected by the user is saved on the service and stored there under protection;
-- Another device connects and syncs with the service;
-- The uploaded data appears on the device connected to the account.
+- **Synchronization**: Sync favorites, categories, and reading history across devices.
+- **Authentication**: JWT-based auth with user registration and login.
+- **Password Reset**: Full flow including email dispatch and deeplinking.
+- **Health Check**: `/` endpoint for uptime monitoring.
+- **Database**: 
+    - **Local**: SQLite with production optimizations (WAL, Foreign Keys).
+    - **Remote**: MySQL support for easy migration from kotatsu-syncserver.
+- **Mail**: SMTP support for transactional emails.
 
 ## Installation
 
@@ -35,87 +35,99 @@ docker run -d -p 8080:8080 \
   --name kotatsu-sync kotatsu-go-server
 ```
 
-### Docker compose
-
-#### Clone the repository:
-
-```shell
-git clone https://github.com/theLastOfCats/kotatsu-go-server.git \
-  && cd kotatsu-go-server
-```
-
-#### Specify your settings (optional)
-
-You can override settings via the `.env` file.
-
-```shell
-cp .env.example .env
-```
-
-#### Start services:
-
-```shell
-docker compose up -d
-```
-
-### Manual (Binary)
-
-Download the latest release from the [Releases](https://github.com/theLastOfCats/kotatsu-go-server/releases) page.
-
-Run the server:
-
-```shell
-export JWT_SECRET=your_secret
-./kotatsu-syncserver
-```
-
 ### Manual (Go)
 
-Requirements:
-
-1. Go 1.24+
-
-Commands:
+Requirements: Go 1.24+
 
 ```shell
-git clone https://github.com/theLastOfCats/kotatsu-go-server.git \
-  && cd kotatsu-go-server \
-  && go build -o kotatsu-server ./cmd/server
+git clone https://github.com/theLastOfCats/kotatsu-go-server.git
+cd kotatsu-go-server
+go build -o kotatsu-server ./cmd/server
 ```
 
 Run the server:
 
 ```shell
 export JWT_SECRET=your_secret
-./kotatsu-syncserver
+./kotatsu-server
 ```
 
 ## Configuration
 
-The server is configured using environment variables.
+The server is configured using environment variables or a `.env` file.
 
 | Variable | Description | Default |
 |---|---|---|
 | `JWT_SECRET` | **Required.** Secret key for signing JWT tokens. | None |
-| `DB_PATH` | Path to the SQLite database file. | `data/kotatsu.db` |
+| `DB_PATH` | Path to SQLite file OR MySQL DSN (see below). | `data/kotatsu.db` |
 | `PORT` | Port to listen on. | `8080` |
+| `BASE_URL` | Base URL for generating deeplinks (e.g., in emails). | `http://localhost:8080` |
 
-## FAQ
+### Database Configuration
 
-### What data can be synchronized?
+**SQLite (Local)**:
+```bash
+DB_PATH=data/kotatsu.db
+```
 
-- Favorites (with categories);
-- History.
+**MySQL (Remote)** - Compatible with original kotatsu-syncserver:
+```bash
+DB_PATH="user:password@tcp(hostname:3306)/database_name?parseTime=true"
+```
 
-### How do I sync my data?
+The server automatically detects the database type based on the DSN format.
 
-Go to `Options -> Settings -> Services`, then select **Synchronization**. Enter your email address (even if you have not registered in the synchronization system, the authorization screen also acts as a registration screen), then come up with and enter a password.
+### Mail Configuration (SMTP)
 
-After the authorization/registration process, you will return back to the **Content** screen. To set up synchronization, select **Synchronization** again, and then you will go to system sync settings. Choose what you want to sync, history, favorites or all together, after which automatic synchronization to our server will begin.
+To enable password reset emails, configure an SMTP provider:
 
-### Can I use a synchronization server on my hosting?
+| Variable | Description | Example |
+|---|---|---|
+| `MAIL_PROVIDER` | `smtp` or `console` (logs to stdout). | `smtp` |
+| `SMTP_HOST` | SMTP Server Host. | `smtp.gmail.com` |
+| `SMTP_PORT` | SMTP Server Port. | `587` |
+| `SMTP_USER` | SMTP Username. | `user@example.com` |
+| `SMTP_PASSWORD` | SMTP Password. | `secret` |
+| `SMTP_FROM` | Sender email address. | `noreply@kotatsu.app` |
 
-Yes, you can use your synchronization server in the application by specifying its address (`Options -> Settings -> Services -> Synchronization settings -> Server address`). Instructions for deploying the server are above.
+### Remote Database (Turso)
+
+To use a remote LibSQL/Turso database instead of a local file:
+
+```shell
+export DB_PATH="libsql://your-db-name.turso.io?authToken=ey..."
+```
+
+## Testing
+
+This project includes a comprehensive test suite covering Auth, Sync, and User flows.
+It uses an in-memory SQLite database and mock mailer, so no external dependencies are needed to run tests.
+
+```shell
+go test -v ./...
+```
+
+To see coverage:
+
+```shell
+go test -coverprofile=coverage.out ./internal/api
+go tool cover -func=coverage.out
+```
+
+## API Endpoints
+
+### Public
+- `GET /` - Health check ("Alive")
+- `POST /auth/login` - Login (returns JWT)
+- `POST /auth/register` - Register (returns JWT)
+- `POST /forgot-password` - Request password reset
+- `POST /reset-password` - Reset password with token
+- `GET /deeplink/reset-password` - HTML page for password reset
+
+### Protected (Bearer Token)
+- `GET /me` - Get current user info
+- `GET/POST /resource/history` - Sync reading history
+- `GET/POST /resource/favourites` - Sync favourites and categories
 
 ## License
 

@@ -17,7 +17,7 @@ type UserResponse struct {
 }
 
 func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(int64)
+	userID, ok := GetUserID(r)
 	if !ok {
 		// Should be handled by middleware usually, but unexpected assertion fail
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)

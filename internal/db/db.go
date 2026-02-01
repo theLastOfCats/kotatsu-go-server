@@ -7,26 +7,51 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/theLastOfCats/kotatsu-go-server/internal/model"
 	_ "modernc.org/sqlite"
 )
 
 //go:embed schema.sql
-var schema string
+var schemaSQLite string
+
+//go:embed schema_mysql.sql
+var schemaMySQL string
 
 type DB struct {
 	*sql.DB
 }
 
 func New(dsn string) (*DB, error) {
-	// Ensure the directory exists
-	dir := filepath.Dir(dsn)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create database directory: %w", err)
+	var db *sql.DB
+	var err error
+	var dbType string
+
+	// Determine database type based on DSN format
+	// MySQL DSN examples: user:password@tcp(host:port)/dbname, user:password@/dbname
+	// SQLite DSN: file path (e.g., data/kotatsu.db, /path/to/db.sqlite, :memory:)
+
+	// Simple heuristic: if DSN contains '@' it's likely MySQL
+	isMySQL := strings.Contains(dsn, "@")
+
+	if isMySQL {
+		// MySQL database
+		dbType = "mysql"
+		db, err = sql.Open("mysql", dsn)
+	} else {
+		// SQLite database - ensure directory exists (unless it's :memory:)
+		dbType = "sqlite"
+		if dsn != ":memory:" {
+			dir := filepath.Dir(dsn)
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return nil, fmt.Errorf("failed to create database directory: %w", err)
+			}
+		}
+		db, err = sql.Open("sqlite", dsn)
 	}
 
-	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -36,7 +61,22 @@ func New(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	if err := initSchema(db); err != nil {
+	// Apply SQLite-specific optimizations
+	if dbType == "sqlite" {
+		if _, err := db.Exec(`
+			PRAGMA journal_mode = WAL;
+			PRAGMA foreign_keys = ON;
+			PRAGMA busy_timeout = 5000;
+			PRAGMA synchronous = NORMAL;
+			PRAGMA cache_size = -20000;
+			PRAGMA temp_store = MEMORY;
+		`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to configure database: %w", err)
+		}
+	}
+
+	if err := initSchema(db, dbType); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
@@ -44,7 +84,13 @@ func New(dsn string) (*DB, error) {
 	return &DB{db}, nil
 }
 
-func initSchema(db *sql.DB) error {
+func initSchema(db *sql.DB, dbType string) error {
+	var schema string
+	if dbType == "mysql" {
+		schema = schemaMySQL
+	} else {
+		schema = schemaSQLite
+	}
 	_, err := db.Exec(schema)
 	return err
 }

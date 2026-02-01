@@ -1,0 +1,15 @@
+services:
+  kotatsu-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: kotatsu-go-server
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - ../data:/app/data
+    env_file:
+      - ../.env
+    environment:
+      - DB_PATH=/app/data/kotatsu.db

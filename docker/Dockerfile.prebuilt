@@ -1,0 +1,21 @@
+# Dockerfile for pre-built binaries
+FROM --platform=$TARGETPLATFORM alpine:latest
+
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates tzdata
+
+# Copy the pre-built binary based on target platform
+COPY bin/${TARGETPLATFORM#linux/}/kotatsu-server-linux-${TARGETPLATFORM#linux/} /app/kotatsu-server
+RUN chmod +x /app/kotatsu-server
+
+# Create data directory
+RUN mkdir -p /app/data
+
+EXPOSE 8080
+
+CMD ["./kotatsu-server"]
