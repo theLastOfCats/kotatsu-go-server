@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - JWT_SECRET=dev_secret_key_change_me
+      - DB_PATH=/app/data/kotatsu.db
