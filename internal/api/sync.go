@@ -215,7 +215,7 @@ func (h *SyncHandler) PostFavourites(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Successfully upserted manga %d", fav.MangaID)
 			} else if fav.MangaID != 0 {
 				// Ensure manga record exists for foreign key constraint
-				if err := ensureMangaExists(tx, fav.MangaID); err != nil {
+				if err := ensureMangaExists(tx, fav.MangaID, isMySQL); err != nil {
 					return err
 				}
 				log.Printf("Ensured manga %d exists", fav.MangaID)
@@ -223,7 +223,7 @@ func (h *SyncHandler) PostFavourites(w http.ResponseWriter, r *http.Request) {
 
 			// Ensure category exists before inserting favourite
 			// This handles race conditions when multiple devices sync simultaneously
-			if err := ensureCategoryExists(tx, fav.CategoryID, userID); err != nil {
+			if err := ensureCategoryExists(tx, fav.CategoryID, userID, isMySQL); err != nil {
 				return err
 			}
 			log.Printf("Ensured category %d exists for user %d", fav.CategoryID, userID)
@@ -263,7 +263,15 @@ func (h *SyncHandler) PostFavourites(w http.ResponseWriter, r *http.Request) {
 
 func (h *SyncHandler) getTimestamp(userID int64, column string) *int64 {
 	var timestamp sql.NullInt64
-	query := "SELECT " + column + " FROM users WHERE id = ?"
+	query := ""
+	switch column {
+	case "history_sync_timestamp":
+		query = "SELECT history_sync_timestamp FROM users WHERE id = ?"
+	case "favourites_sync_timestamp":
+		query = "SELECT favourites_sync_timestamp FROM users WHERE id = ?"
+	default:
+		return nil
+	}
 	h.DB.QueryRow(query, userID).Scan(&timestamp)
 	if timestamp.Valid {
 		return &timestamp.Int64
@@ -307,42 +315,30 @@ func upsertManga(tx *sql.Tx, manga *model.Manga, isMySQL bool) error {
 
 // ensureMangaExists inserts a placeholder manga record if it doesn't exist
 // This is needed when the app sends manga_id without manga object (for already-synced manga)
-func ensureMangaExists(tx *sql.Tx, mangaID int64) error {
-	// Check if manga exists
-	var exists bool
-	err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM manga WHERE id = ?)", mangaID).Scan(&exists)
-	if err != nil {
-		return err
-	}
-
-	if !exists {
-		// Insert placeholder manga record to satisfy foreign key constraint
-		query := `INSERT INTO manga (id, title, alt_title, url, public_url, rating, content_rating, cover_url, large_cover_url, state, author, source, nsfw)
+func ensureMangaExists(tx *sql.Tx, mangaID int64, isMySQL bool) error {
+	query := `INSERT INTO manga (id, title, alt_title, url, public_url, rating, content_rating, cover_url, large_cover_url, state, author, source, nsfw)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO NOTHING`
+	if isMySQL {
+		query = `INSERT IGNORE INTO manga (id, title, alt_title, url, public_url, rating, content_rating, cover_url, large_cover_url, state, author, source, nsfw)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-		_, err := tx.Exec(query, mangaID, "", "", "", "", -1.0, "", "", "", "", "", "", false)
-		return err
 	}
-	return nil
+	_, err := tx.Exec(query, mangaID, "", "", "", "", -1.0, "", "", "", "", "", "", false)
+	return err
 }
 
 // ensureCategoryExists inserts a placeholder category if it doesn't exist
 // This handles cases where favourites reference categories that haven't been synced yet
-func ensureCategoryExists(tx *sql.Tx, categoryID int64, userID int64) error {
-	// Check if category exists
-	var exists bool
-	err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM categories WHERE id = ? AND user_id = ?)", categoryID, userID).Scan(&exists)
-	if err != nil {
-		return err
-	}
-
-	if !exists {
-		// Insert placeholder category to satisfy foreign key constraint
-		query := "INSERT INTO categories (id, user_id, created_at, sort_key, title, `order`, track, show_in_lib, deleted_at)\n" +
+func ensureCategoryExists(tx *sql.Tx, categoryID int64, userID int64, isMySQL bool) error {
+	query := `INSERT INTO categories (id, user_id, created_at, sort_key, title, ` + "`order`" + `, track, show_in_lib, deleted_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id, user_id) DO NOTHING`
+	if isMySQL {
+		query = "INSERT IGNORE INTO categories (id, user_id, created_at, sort_key, title, `order`, track, show_in_lib, deleted_at)\n" +
 			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-		_, err := tx.Exec(query, categoryID, userID, 0, 0, "Unknown", "NEWEST", true, true, 0)
-		return err
 	}
-	return nil
+	_, err := tx.Exec(query, categoryID, userID, 0, 0, "Unknown", "NEWEST", true, true, 0)
+	return err
 }
 
 func upsertTag(tx *sql.Tx, tag model.Tag, isMySQL bool) error {
@@ -434,21 +430,28 @@ func (h *SyncHandler) fetchHistory(userID int64) ([]model.History, error) {
 	defer rows.Close()
 
 	var history []model.History
+	mangaSet := make(map[int64]struct{})
 	for rows.Next() {
 		var hItem model.History
 		hItem.UserID = userID
 		if err := rows.Scan(&hItem.MangaID, &hItem.CreatedAt, &hItem.UpdatedAt, &hItem.ChapterID, &hItem.Page, &hItem.Scroll, &hItem.Percent, &hItem.Chapters, &hItem.DeletedAt); err != nil {
 			return nil, err
 		}
-
-		manga, err := h.fetchManga(hItem.MangaID)
-		if err != nil {
-			return nil, err
-		}
-		hItem.Manga = manga
-
+		mangaSet[hItem.MangaID] = struct{}{}
 		history = append(history, hItem)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	mangaByID, err := h.fetchMangaMap(keysFromSet(mangaSet))
+	if err != nil {
+		return nil, err
+	}
+	for i := range history {
+		history[i].Manga = mangaByID[history[i].MangaID]
+	}
+
 	return history, nil
 }
 
@@ -469,6 +472,9 @@ func (h *SyncHandler) fetchFavouritesAndCategories(userID int64) ([]model.Favour
 		}
 		categories = append(categories, cat)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
 
 	// Favourites
 	favRows, err := h.DB.Query(`SELECT manga_id, category_id, sort_key, pinned, created_at, deleted_at FROM favourites WHERE user_id = ?`, userID)
@@ -478,62 +484,124 @@ func (h *SyncHandler) fetchFavouritesAndCategories(userID int64) ([]model.Favour
 	defer favRows.Close()
 
 	var favourites []model.Favourite
+	mangaSet := make(map[int64]struct{})
 	for favRows.Next() {
 		var fav model.Favourite
 		fav.UserID = userID
 		if err := favRows.Scan(&fav.MangaID, &fav.CategoryID, &fav.SortKey, &fav.Pinned, &fav.CreatedAt, &fav.DeletedAt); err != nil {
 			return nil, nil, err
 		}
-
-		manga, err := h.fetchManga(fav.MangaID)
-		if err != nil {
-			return nil, nil, err
-		}
-		fav.Manga = manga
-
+		mangaSet[fav.MangaID] = struct{}{}
 		favourites = append(favourites, fav)
+	}
+	if err := favRows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	mangaByID, err := h.fetchMangaMap(keysFromSet(mangaSet))
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range favourites {
+		favourites[i].Manga = mangaByID[favourites[i].MangaID]
 	}
 
 	return favourites, categories, nil
 }
 
-func (h *SyncHandler) fetchManga(mangaID int64) (*model.Manga, error) {
-	row := h.DB.QueryRow(`SELECT id, title, alt_title, url, public_url, rating, content_rating, cover_url, large_cover_url, state, author, source, nsfw FROM manga WHERE id = ?`, mangaID)
-	var m model.Manga
-	if err := row.Scan(&m.ID, &m.Title, &m.AltTitle, &m.URL, &m.PublicURL, &m.Rating, &m.ContentRating, &m.CoverURL, &m.LargeCoverURL, &m.State, &m.Author, &m.Source, &m.NSFW); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, err
+func keysFromSet(set map[int64]struct{}) []int64 {
+	keys := make([]int64, 0, len(set))
+	for id := range set {
+		keys = append(keys, id)
 	}
-
-	tags, err := h.fetchTags(m.ID)
-	if err != nil {
-		return nil, err
-	}
-	m.Tags = tags
-
-	return &m, nil
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i] < keys[j]
+	})
+	return keys
 }
 
-func (h *SyncHandler) fetchTags(mangaID int64) ([]model.Tag, error) {
-	rows, err := h.DB.Query("SELECT t.id, t.title, t.`key`, t.source, t.pinned "+
-		`
-                             FROM tags t 
-                             JOIN manga_tags mt ON t.id = mt.tag_id 
-                             WHERE mt.manga_id = ?`, mangaID)
+func makePlaceholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strings.TrimRight(strings.Repeat("?,", n), ",")
+}
+
+func (h *SyncHandler) fetchMangaMap(mangaIDs []int64) (map[int64]*model.Manga, error) {
+	mangaByID := make(map[int64]*model.Manga, len(mangaIDs))
+	if len(mangaIDs) == 0 {
+		return mangaByID, nil
+	}
+
+	args := make([]any, 0, len(mangaIDs))
+	for _, id := range mangaIDs {
+		args = append(args, id)
+	}
+
+	query := `SELECT id, title, alt_title, url, public_url, rating, content_rating, cover_url, large_cover_url, state, author, source, nsfw
+		FROM manga WHERE id IN (` + makePlaceholders(len(mangaIDs)) + `)`
+	rows, err := h.DB.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var tags []model.Tag
 	for rows.Next() {
-		var t model.Tag
-		if err := rows.Scan(&t.ID, &t.Title, &t.Key, &t.Source, &t.Pinned); err != nil {
+		var m model.Manga
+		if err := rows.Scan(&m.ID, &m.Title, &m.AltTitle, &m.URL, &m.PublicURL, &m.Rating, &m.ContentRating, &m.CoverURL, &m.LargeCoverURL, &m.State, &m.Author, &m.Source, &m.NSFW); err != nil {
 			return nil, err
 		}
-		tags = append(tags, t)
+		mCopy := m
+		mangaByID[m.ID] = &mCopy
 	}
-	return tags, nil
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	tagsByMangaID, err := h.fetchTagsByMangaIDs(mangaIDs)
+	if err != nil {
+		return nil, err
+	}
+	for mangaID, tags := range tagsByMangaID {
+		if manga := mangaByID[mangaID]; manga != nil {
+			manga.Tags = tags
+		}
+	}
+
+	return mangaByID, nil
+}
+
+func (h *SyncHandler) fetchTagsByMangaIDs(mangaIDs []int64) (map[int64][]model.Tag, error) {
+	tagsByMangaID := make(map[int64][]model.Tag, len(mangaIDs))
+	if len(mangaIDs) == 0 {
+		return tagsByMangaID, nil
+	}
+
+	args := make([]any, 0, len(mangaIDs))
+	for _, id := range mangaIDs {
+		args = append(args, id)
+	}
+
+	query := "SELECT mt.manga_id, t.id, t.title, t.`key`, t.source, t.pinned " +
+		"FROM tags t JOIN manga_tags mt ON t.id = mt.tag_id " +
+		"WHERE mt.manga_id IN (" + makePlaceholders(len(mangaIDs)) + ")"
+	rows, err := h.DB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var mangaID int64
+		var t model.Tag
+		if err := rows.Scan(&mangaID, &t.ID, &t.Title, &t.Key, &t.Source, &t.Pinned); err != nil {
+			return nil, err
+		}
+		tagsByMangaID[mangaID] = append(tagsByMangaID[mangaID], t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return tagsByMangaID, nil
 }
