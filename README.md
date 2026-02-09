@@ -106,6 +106,17 @@ go test -coverprofile=coverage.out ./internal/api
 go tool cover -func=coverage.out
 ```
 
+### Justfile Automation
+
+If you use [`just`](https://github.com/casey/just), you can run common workflows via:
+
+```shell
+just test
+just mysql-up
+MYSQL_TEST_DSN='kotatsu:kotatsupass@tcp(127.0.0.1:3306)/kotatsu?parseTime=true' just test-integration
+just mysql-down
+```
+
 ## API Endpoints
 
 ### Public
