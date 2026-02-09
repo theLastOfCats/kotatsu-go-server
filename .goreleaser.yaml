@@ -1,6 +1,6 @@
 version: 2
 
-project_name: kotatsu-syncserver
+project_name: kotatsu-go-server
 
 before:
   hooks:
@@ -50,6 +50,6 @@ changelog:
 release:
   github:
     owner: theLastOfCats
-    name: kotatsu-syncserver
+    name: kotatsu-go-server
   draft: false
   prerelease: auto

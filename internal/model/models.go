@@ -1,9 +1,9 @@
 package model
 
 type User struct {
-	ID                        int64  `json:"id" db:"id"`
-	Email                     string `json:"email" db:"email"`
-	PasswordHash              string `json:"-" db:"password_hash"`
+	ID                        int64   `json:"id" db:"id"`
+	Email                     string  `json:"email" db:"email"`
+	PasswordHash              string  `json:"-" db:"password_hash"`
 	Nickname                  *string `json:"nickname" db:"nickname"`
 	FavouritesSyncTimestamp   *int64  `json:"favourites_sync_timestamp" db:"favourites_sync_timestamp"`
 	HistorySyncTimestamp      *int64  `json:"history_sync_timestamp" db:"history_sync_timestamp"`
@@ -12,7 +12,7 @@ type User struct {
 }
 
 type Manga struct {
-	ID            int64   `json:"id" db:"id"`
+	ID            int64   `json:"manga_id" db:"id"`
 	Title         string  `json:"title" db:"title"`
 	AltTitle      *string `json:"alt_title" db:"alt_title"`
 	URL           string  `json:"url" db:"url"`
@@ -29,7 +29,7 @@ type Manga struct {
 }
 
 type Tag struct {
-	ID     int64  `json:"id" db:"id"`
+	ID     int64  `json:"tag_id" db:"id"`
 	Title  string `json:"title" db:"title"`
 	Key    string `json:"key" db:"key"`
 	Source string `json:"source" db:"source"`
@@ -37,8 +37,8 @@ type Tag struct {
 }
 
 type Category struct {
-	ID        int64  `json:"id" db:"id"`
-	UserID    int64  `json:"user_id" db:"user_id"`
+	ID        int64  `json:"category_id" db:"id"`
+	UserID    int64  `json:"-" db:"user_id"`
 	CreatedAt int64  `json:"created_at" db:"created_at"`
 	SortKey   int    `json:"sort_key" db:"sort_key"`
 	Title     string `json:"title" db:"title"`
@@ -49,20 +49,20 @@ type Category struct {
 }
 
 type Favourite struct {
-	MangaID    int64 `json:"manga_id" db:"manga_id"`
+	MangaID    int64  `json:"manga_id" db:"manga_id"`
 	Manga      *Manga `json:"manga,omitempty" db:"-"`
-	CategoryID int64 `json:"category_id" db:"category_id"`
-	UserID     int64 `json:"user_id" db:"user_id"`
-	SortKey    int   `json:"sort_key" db:"sort_key"`
-	Pinned     bool  `json:"pinned" db:"pinned"`
-	CreatedAt  int64 `json:"created_at" db:"created_at"`
-	DeletedAt  int64 `json:"deleted_at" db:"deleted_at"`
+	CategoryID int64  `json:"category_id" db:"category_id"`
+	UserID     int64  `json:"-" db:"user_id"`
+	SortKey    int    `json:"sort_key" db:"sort_key"`
+	Pinned     bool   `json:"pinned" db:"pinned"`
+	CreatedAt  int64  `json:"created_at" db:"created_at"`
+	DeletedAt  int64  `json:"deleted_at" db:"deleted_at"`
 }
 
 type History struct {
 	MangaID   int64   `json:"manga_id" db:"manga_id"`
 	Manga     *Manga  `json:"manga,omitempty" db:"-"`
-	UserID    int64   `json:"user_id" db:"user_id"`
+	UserID    int64   `json:"-" db:"user_id"`
 	CreatedAt int64   `json:"created_at" db:"created_at"`
 	UpdatedAt int64   `json:"updated_at" db:"updated_at"`
 	ChapterID int64   `json:"chapter_id" db:"chapter_id"`

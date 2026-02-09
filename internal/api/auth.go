@@ -34,13 +34,13 @@ type LoginRequest struct {
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		JSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		JSONError(w, "Failed to hash password", http.StatusInternalServerError)
 		return
 	}
 
@@ -48,7 +48,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Check for duplicate email error (SQLite specific error check could be added here)
 		// For simplicity, generic error
-		http.Error(w, "Failed to register user (email might be taken)", http.StatusInternalServerError)
+		JSONError(w, "Failed to register user (email might be taken)", http.StatusInternalServerError)
 		return
 	}
 
@@ -58,7 +58,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		JSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -72,44 +72,44 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		// In a real env, check config "ALLOW_NEW_REGISTER". For now, assume true.
 		hash, err := auth.HashPassword(req.Password)
 		if err != nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			JSONError(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 		res, err := h.DB.Exec("INSERT INTO users (email, password_hash) VALUES (?, ?)", req.Email, hash)
 		if err != nil {
-			http.Error(w, "Failed to register user", http.StatusInternalServerError)
+			JSONError(w, "Failed to register user", http.StatusInternalServerError)
 			return
 		}
 		userID, _ := res.LastInsertId()
 
 		token, err := auth.GenerateToken(userID)
 		if err != nil {
-			http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+			JSONError(w, "Failed to generate token", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"token": token})
 		return
 	} else if err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
+		JSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
 	// User found, verify password
 	match, err := auth.VerifyPassword(req.Password, user.PasswordHash)
 	if err != nil {
-		http.Error(w, "Error verifying password", http.StatusInternalServerError)
+		JSONError(w, "Error verifying password", http.StatusInternalServerError)
 		return
 	}
 
 	if !match {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		JSONError(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
 	token, err := auth.GenerateToken(user.ID)
 	if err != nil {
-		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		JSONError(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
 
@@ -122,7 +122,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		Email string `json:"email"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		JSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -137,13 +137,13 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	// Generate reset token
 	token, hash, err := auth.GenerateResetToken()
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		JSONError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 	expiresAt := time.Now().Add(1 * time.Hour).Unix()
 
 	if err := h.DB.SetPasswordResetToken(user.ID, hash, expiresAt); err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
+		JSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -168,7 +168,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) ResetPasswordDeeplink(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
-		http.Error(w, "Missing token", http.StatusBadRequest)
+		JSONError(w, "Missing token", http.StatusBadRequest)
 		return
 	}
 
@@ -177,7 +177,7 @@ func (h *AuthHandler) ResetPasswordDeeplink(w http.ResponseWriter, r *http.Reque
 
 	html, err := h.Templates.Render("pages/reset-password.html", map[string]string{"DeepLink": deepLink})
 	if err != nil {
-		http.Error(w, "Template error", http.StatusInternalServerError)
+		JSONError(w, "Template error", http.StatusInternalServerError)
 		return
 	}
 
@@ -191,35 +191,35 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		Password   string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		JSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	tokenHash := auth.HashToken(req.ResetToken)
 	user, err := h.DB.GetUserByResetToken(tokenHash)
 	if err != nil {
-		http.Error(w, "Invalid or expired token", http.StatusBadRequest)
+		JSONError(w, "Invalid or expired token", http.StatusBadRequest)
 		return
 	}
 
 	if user.PasswordResetTokenExpires == nil || *user.PasswordResetTokenExpires < time.Now().Unix() {
-		http.Error(w, "Invalid or expired token", http.StatusBadRequest)
+		JSONError(w, "Invalid or expired token", http.StatusBadRequest)
 		return
 	}
 
 	if len(req.Password) < 2 || len(req.Password) > 24 {
-		http.Error(w, "Password should be from 2 to 24 characters long", http.StatusBadRequest)
+		JSONError(w, "Password should be from 2 to 24 characters long", http.StatusBadRequest)
 		return
 	}
 
 	newHash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		http.Error(w, "Internal error", http.StatusInternalServerError)
+		JSONError(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
 	if err := h.DB.UpdatePassword(user.ID, newHash); err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
+		JSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 

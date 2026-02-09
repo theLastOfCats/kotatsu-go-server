@@ -49,6 +49,26 @@ func New(dsn string) (*DB, error) {
 				return nil, fmt.Errorf("failed to create database directory: %w", err)
 			}
 		}
+
+		// Add SQLite pragmas via DSN to ensure they apply to all connections
+		if !strings.Contains(dsn, "?") {
+			dsn += "?"
+		} else {
+			dsn += "&"
+		}
+
+		// Configure WAL, Foreign Keys, Busy Timeout via DSN
+		// modernc.org/sqlite uses _pragma query parameters
+		pragmas := []string{
+			"_pragma=foreign_keys(1)",
+			"_pragma=journal_mode(WAL)",
+			"_pragma=busy_timeout(30000)",
+			"_pragma=synchronous(NORMAL)",
+			"_pragma=cache_size(-20000)",
+			"_pragma=temp_store(MEMORY)",
+		}
+		dsn += strings.Join(pragmas, "&")
+
 		db, err = sql.Open("sqlite", dsn)
 	}
 
@@ -63,17 +83,9 @@ func New(dsn string) (*DB, error) {
 
 	// Apply SQLite-specific optimizations
 	if dbType == "sqlite" {
-		if _, err := db.Exec(`
-			PRAGMA journal_mode = WAL;
-			PRAGMA foreign_keys = ON;
-			PRAGMA busy_timeout = 5000;
-			PRAGMA synchronous = NORMAL;
-			PRAGMA cache_size = -20000;
-			PRAGMA temp_store = MEMORY;
-		`); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("failed to configure database: %w", err)
-		}
+		// SQLite needs more connections to handle nested queries (N+1) in fetchFavourites
+		// and concurrent requests, preventing deadlock (e.g. Reader holds Conn1, needs Conn2).
+		db.SetMaxOpenConns(25)
 	}
 
 	if err := initSchema(db, dbType); err != nil {
@@ -91,8 +103,19 @@ func initSchema(db *sql.DB, dbType string) error {
 	} else {
 		schema = schemaSQLite
 	}
-	_, err := db.Exec(schema)
-	return err
+
+	for _, stmt := range strings.Split(schema, ";") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+
+		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (db *DB) WithTx(ctx context.Context, fn func(*sql.Tx) error) error {
@@ -154,6 +177,15 @@ func (db *DB) ClearResetToken(userID int64) error {
 	query := `UPDATE users SET password_reset_token_hash = NULL, password_reset_token_expires_at = NULL WHERE id = ?`
 	_, err := db.Exec(query, userID)
 	return err
+}
+
+func (db *DB) UserExists(id int64) (bool, error) {
+	var exists bool
+	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)", id).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 func (db *DB) GetUserByID(id int64) (*model.User, error) {

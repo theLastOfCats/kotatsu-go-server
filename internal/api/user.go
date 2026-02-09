@@ -20,13 +20,13 @@ func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	userID, ok := GetUserID(r)
 	if !ok {
 		// Should be handled by middleware usually, but unexpected assertion fail
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		JSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	user, err := h.DB.GetUserByID(userID)
 	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
+		JSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 

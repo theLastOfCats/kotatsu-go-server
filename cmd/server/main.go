@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	_ "github.com/joho/godotenv/autoload"
 	"github.com/theLastOfCats/kotatsu-go-server/internal/api"
@@ -50,6 +51,9 @@ func main() {
 	syncHandler := &api.SyncHandler{DB: database}
 	userHandler := &api.UserHandler{DB: database}
 
+	// Initialize Middleware
+	middleware := &api.Middleware{DB: database}
+
 	// Router
 	mux := http.NewServeMux()
 
@@ -63,13 +67,13 @@ func main() {
 	mux.HandleFunc("GET /deeplink/reset-password", authHandler.ResetPasswordDeeplink)
 
 	// Protected Routes
-	mux.Handle("GET /me", api.AuthMiddleware(http.HandlerFunc(userHandler.GetMe)))
+	mux.Handle("GET /me", middleware.AuthMiddleware(http.HandlerFunc(userHandler.GetMe)))
 
 	// Sync Routes (Protected)
-	mux.Handle("GET /resource/history", api.AuthMiddleware(http.HandlerFunc(syncHandler.GetHistory)))
-	mux.Handle("POST /resource/history", api.AuthMiddleware(http.HandlerFunc(syncHandler.PostHistory)))
-	mux.Handle("GET /resource/favourites", api.AuthMiddleware(http.HandlerFunc(syncHandler.GetFavourites)))
-	mux.Handle("POST /resource/favourites", api.AuthMiddleware(http.HandlerFunc(syncHandler.PostFavourites)))
+	mux.Handle("GET /resource/history", middleware.AuthMiddleware(http.HandlerFunc(syncHandler.GetHistory)))
+	mux.Handle("POST /resource/history", middleware.AuthMiddleware(http.HandlerFunc(syncHandler.PostHistory)))
+	mux.Handle("GET /resource/favourites", middleware.AuthMiddleware(http.HandlerFunc(syncHandler.GetFavourites)))
+	mux.Handle("POST /resource/favourites", middleware.AuthMiddleware(http.HandlerFunc(syncHandler.PostFavourites)))
 
 	// Start Server
 	port := os.Getenv("PORT")
@@ -77,7 +81,23 @@ func main() {
 		port = "8080"
 	}
 	log.Printf("Server starting on port %s...", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+
+	handler := http.Handler(mux)
+	if isDebugEnabled() {
+		log.Println("Debug logging middleware enabled")
+		handler = api.LoggingMiddleware(handler)
+	}
+
+	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatalf("Server failed: %v", err)
+	}
+}
+
+func isDebugEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DEBUG"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
